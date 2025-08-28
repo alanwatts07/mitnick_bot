@@ -12,12 +12,21 @@ const Player = sequelize.define('Player', {
         type: DataTypes.INTEGER,
         defaultValue: 1,
     },
-    // This new field will store the unique password assigned to the player for their current level.
     activePassword: {
         type: DataTypes.STRING,
         allowNull: true,
     },
     attempts: {
+        type: DataTypes.JSON,
+        defaultValue: {},
+    },
+    failedSubmissions: {
+        type: DataTypes.JSON,
+        defaultValue: {},
+    },
+    // NEW FIELD: This will store the entire chat history for each level.
+    // e.g., { "1": [{ role: "user", content: "..." }, { role: "assistant", content: "..." }] }
+    chatHistory: {
         type: DataTypes.JSON,
         defaultValue: {},
     },

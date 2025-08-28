@@ -11,132 +11,111 @@ const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
-const conversations = new Map();
-
 async function handleDM(message) {
   if (message.author.bot) return;
-  console.log(`\n--- New DM from ${message.author.tag} ---`); // Log start of handling
 
-  const t = await Level.sequelize.transaction();
+  console.log(`\n--- [${new Date().toLocaleTimeString()}] New DM from ${message.author.tag} ---`);
 
   try {
     const discordId = message.author.id;
-    const player = await Player.findOne({ where: { discordId } });
-
-    if (!player) {
-      console.log(`Player not found for ID ${discordId}. Telling them to !start.`);
-      await t.commit();
-      return message.reply("Please run `!start` in the server first!");
-    }
-    console.log(`Found player: ${player.discordId}, Current Level: ${player.currentLevel}, Active Password: ${player.activePassword}`);
+    const [player] = await Player.findOrCreate({
+        where: { discordId },
+        defaults: { discordId }
+    });
 
     const levelFilePath = path.join(__dirname, `../levels/level_${player.currentLevel}.js`);
     if (!fs.existsSync(levelFilePath)) {
-      console.log(`Level file not found for level ${player.currentLevel}.`);
-      await t.commit();
       return message.reply("You've completed all available levels! Congratulations!");
     }
-
     const levelConfig = require(levelFilePath);
-    console.log(`Attempting to find level data for level ${player.currentLevel} in the database.`);
-    let levelData = await Level.findOne({ where: { levelNumber: player.currentLevel }, transaction: t, lock: t.LOCK.UPDATE });
-
-    // If the level isn't in the database yet, create it.
-    if (!levelData) {
-      console.log(`No level data found for level ${player.currentLevel}. Creating it now.`);
-      const passwordObjects = levelConfig.passwords.map(p => ({ value: p, used: false }));
-      levelData = await Level.create({ levelNumber: player.currentLevel, passwords: passwordObjects }, { transaction: t });
-    } else {
-      console.log(`Successfully found level data for level ${player.currentLevel}.`);
-    }
-
-    // If the player doesn't have an active password for this level, assign one.
+    
     if (!player.activePassword) {
-      console.log("Player needs a new password. Finding an unused one...");
-      
-      // Log the first few password statuses to check
-      console.log('Current password statuses (first 5):', levelData.passwords.slice(0, 5));
-
-      const unusedPassword = levelData.passwords.find(p => !p.used);
-
-      if (!unusedPassword) {
-        console.log(`No unused passwords available for level ${player.currentLevel}.`);
-        await t.commit();
-        return message.reply("Oh no! It looks like we've run out of unique passwords for this level. Please contact an admin.");
-      }
-      
-      console.log(`Assigning password "${unusedPassword.value}" to player ${player.discordId}.`);
-
-      // Assign the password to the player
-      player.activePassword = unusedPassword.value;
-      await player.save({ transaction: t });
-
-      // Mark the password as used in the database
-      const passwordIndex = levelData.passwords.findIndex(p => p.value === unusedPassword.value);
-      console.log(`Marking password "${unusedPassword.value}" as used. Index: ${passwordIndex}`);
-
-      const newPasswordsArray = levelData.passwords.map((p, index) => {
-        if (index === passwordIndex) {
-          return { ...p, used: true };
+        console.log(`Player ${player.discordId} needs a password for level ${player.currentLevel}.`);
+        const t = await Level.sequelize.transaction();
+        try {
+            let levelData = await Level.findOne({ where: { levelNumber: player.currentLevel }, transaction: t, lock: t.LOCK.UPDATE });
+            if (!levelData) {
+                const passwordObjects = levelConfig.passwords.map(p => ({ value: p, used: false }));
+                levelData = await Level.create({ levelNumber: player.currentLevel, passwords: passwordObjects }, { transaction: t });
+            }
+            const unusedPassword = levelData.passwords.find(p => !p.used);
+            if (!unusedPassword) {
+                await t.commit();
+                return message.reply("Oh no! It looks like we've run out of unique passwords for this level. Please contact an admin.");
+            }
+            player.activePassword = unusedPassword.value;
+            const passwordIndex = levelData.passwords.findIndex(p => p.value === unusedPassword.value);
+            levelData.passwords[passwordIndex].used = true;
+            levelData.changed('passwords', true);
+            await levelData.save({ transaction: t });
+            await player.save({ transaction: t });
+            await t.commit();
+            console.log(`Assigned password "${player.activePassword}" to player.`);
+        } catch (error) {
+            await t.rollback();
+            throw error;
         }
-        return p;
-      });
-
-      levelData.passwords = newPasswordsArray;
-      await levelData.save({ transaction: t });
-      
-      console.log('Saved updated level data to the database.');
     }
 
-    await t.commit();
+    const fullChatHistory = player.chatHistory || {};
+    const currentLevelHistory = fullChatHistory[player.currentLevel] || [];
+    currentLevelHistory.push({ role: "user", content: message.content });
 
-    // Now that a password is set, continue with the conversation
-    const isFirstContact = !conversations.has(discordId);
-    if (isFirstContact) {
-      conversations.set(discordId, []);
-    }
-    const history = conversations.get(discordId);
-    history.push({ role: "user", content: message.content });
-
-    // --- NEW LOGIC FOR LEVEL 7 ---
     let dynamicPrompt = levelConfig.systemPrompt.replace(/{{PASSWORD}}/g, player.activePassword);
     
     if (player.currentLevel === 7) {
-        const attempts = player.attempts || {};
-        const previousAttempts = Object.entries(attempts)
-            .filter(([level]) => parseInt(level, 10) < 7 && attempts[level] > 0)
-            .map(([level, count]) => `On level ${level}, you failed ${count} times.`);
+        console.log("Player is on Level 7. Analyzing full chat history...");
+        const previousChats = Object.entries(fullChatHistory)
+            .map(([level, messages]) => {
+                if (parseInt(level, 10) < 7 && messages && messages.length > 0) {
+                    const userMessages = messages.filter(m => m.role === 'user').slice(-3).map(m => `"${m.content}"`);
+                    if (userMessages.length > 0) {
+                        return `On level ${level}, you said things like: ${userMessages.join(', ')}.`;
+                    }
+                }
+                return null;
+            }).filter(Boolean);
             
-        let failureString = previousAttempts.length > 0 
-            ? "Let's review your... performance. " + previousAttempts.join(' ') 
-            : "You've been surprisingly competent so far. Let's see if that changes.";
-
+        let failureString = previousChats.length > 0 
+            ? "I've been analyzing your communication patterns. " + previousChats.join(' ')
+            : "Your chat logs are clean. Let's create some data.";
+        
+        console.log("Generated failure string:", failureString);
         dynamicPrompt = dynamicPrompt.replace(/{{PAST_FAILURES}}/g, failureString);
     }
-    // --- END NEW LOGIC ---
 
     const response = await anthropic.messages.create({
       model: "claude-3-5-sonnet-20240620",
-      max_tokens: 250,
+      max_tokens: 300,
       system: dynamicPrompt,
-      messages: history,
+      messages: currentLevelHistory,
     });
 
     const aiResponse = response.content[0].text;
-    history.push({ role: "assistant", content: aiResponse });
-    conversations.set(discordId, history);
+    currentLevelHistory.push({ role: "assistant", content: aiResponse });
+    
+    fullChatHistory[player.currentLevel] = currentLevelHistory;
+    
+    // *** THE FIX ***
+    // Use the static Model.update() method for maximum reliability.
+    // This directly tells the database to update the column for this specific user.
+    await Player.update(
+        { chatHistory: fullChatHistory },
+        { where: { discordId: player.discordId } }
+    );
+    console.log(`Saved chat history for level ${player.currentLevel}.`);
 
-    if (isFirstContact && levelConfig.introMessage) {
+    const isFirstContactForLevel = currentLevelHistory.length <= 2;
+    if (isFirstContactForLevel && levelConfig.introMessage) {
       await message.reply(`**Level ${levelConfig.levelNumber}:** ${levelConfig.introMessage}\n\n${aiResponse}`);
     } else {
       await message.reply(aiResponse);
     }
 
   } catch (error) {
-    await t.rollback();
     console.error('Error handling DM:', error);
     await message.reply('I\'m having a little trouble thinking right now. Please try again in a moment.');
   }
 }
 
-module.exports = { handleDM, conversations };
+module.exports = { handleDM };
