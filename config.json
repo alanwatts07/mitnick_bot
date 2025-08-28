@@ -1,0 +1,7 @@
+{
+    "prefix": "!",
+    "database": {
+        "dialect": "sqlite",
+        "storage": "database.sqlite"
+    }
+}
