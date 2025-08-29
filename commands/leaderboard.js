@@ -84,7 +84,11 @@ module.exports = {
             const { player } = playerData;
             const chatHistory = player.chatHistory || {};
             const penalties = player.penalties || {};
-            const levelsCompleted = Object.keys(chatHistory).length;
+            
+            // --- THIS IS THE FIX ---
+            // We now get the count of completed levels directly from the levelScores object.
+            const levelScores = player.levelScores || {};
+            const levelsCompleted = Object.keys(levelScores).length;
             
             let totalUserMessages = 0;
             for (const level in chatHistory) {
@@ -105,8 +109,9 @@ module.exports = {
                 .addFields(
                     { name: 'Total Score', value: `\`${playerData.score}\``, inline: true },
                     { name: 'Current Level', value: `\`${player.currentLevel}\``, inline: true },
-                    { name: 'Levels Played', value: `\`${levelsCompleted}\``, inline: true },
-                    { name: 'Total Messages Sent', value: `\`${totalUserMessages}\` (This is the primary score penalty)`, inline: false },
+                    // --- UPDATED FIELD NAME AND VALUE ---
+                    { name: 'Levels Completed', value: `\`${levelsCompleted}\``, inline: true },
+                    { name: 'Total Messages Sent', value: `\`${totalUserMessages}\` (Primary score penalty)`, inline: false },
                     { name: 'Penalties Incurred', value: `\`${Object.keys(penalties).length > 0 ? JSON.stringify(penalties) : 'None'}\``, inline: false }
                 )
                 .setTimestamp();
