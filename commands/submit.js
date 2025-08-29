@@ -22,7 +22,6 @@ module.exports = {
             return message.reply("You haven't started this level yet! Send me a DM to begin.");
         }
 
-        // --- Start of New Scoring Logic ---
         if (player.activePassword.toLowerCase() === passwordGuess.toLowerCase()) {
             
             const levelJustCompleted = player.currentLevel;
@@ -30,10 +29,10 @@ module.exports = {
             const levelHistory = chatHistory[levelJustCompleted] || [];
             const userMessagesSent = levelHistory.filter(msg => msg.role === 'user').length;
             
-            // Calculate the score: 100 points minus 1 for each message sent.
-            const levelScore = Math.max(0, 101 - userMessagesSent);
+            // --- THIS IS THE FIX ---
+            // Calculate the score: 100 points + 2 bonus points, minus 1 for each message.
+            const levelScore = Math.max(0, 103 - userMessagesSent);
 
-            // Get the existing scores, add the new one, and prepare for update.
             const existingScores = player.levelScores || {};
             const updatedScores = { ...existingScores, [levelJustCompleted]: levelScore };
 
@@ -42,7 +41,7 @@ module.exports = {
             await player.update({ 
                 currentLevel: newLevel,
                 activePassword: null,
-                levelScores: updatedScores // Save the updated scores object
+                levelScores: updatedScores
             });
             
             message.reply(`Correct! You completed Level ${levelJustCompleted} with a score of ${levelScore}. You have advanced to Level ${newLevel}.`);
@@ -50,10 +49,8 @@ module.exports = {
             if (message.member) {
                 assignRole(message.member, levelJustCompleted);
             }
-        // --- End of New Scoring Logic ---
 
         } else {
-            // This part is for incorrect guesses, it remains the same.
             const failedSubmissions = player.failedSubmissions || {};
             if (!failedSubmissions[player.currentLevel]) {
                 failedSubmissions[player.currentLevel] = [];
