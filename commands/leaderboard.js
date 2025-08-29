@@ -1,60 +1,122 @@
 // /commands/leaderboard.js
+const { EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ComponentType } = require('discord.js');
 const Player = require('../models/player');
 const { calculateScore } = require('../scoring');
 
 module.exports = {
     name: 'leaderboard',
-    description: 'Displays the top players by their highest score.',
+    description: 'Displays an interactive leaderboard of top players.',
     async execute(message, args) {
-        const players = await Player.findAll();
-        const highScores = new Map();
+        const allProfiles = await Player.findAll();
+        const playerScores = new Map();
 
-        // Calculate scores for all player profiles
-        for (const player of players) {
-            const score = await calculateScore(player.discordId);
-            // Extract the base Discord ID (the part before the underscore)
-            const baseDiscordId = player.discordId.split('_')[0];
+        for (const profile of allProfiles) {
+            const score = await calculateScore(profile.discordId);
+            const baseId = profile.discordId.split('_')[0];
 
-            // If we've already seen this user, only keep the higher score
-            if (highScores.has(baseDiscordId)) {
-                if (score > highScores.get(baseDiscordId).score) {
-                    highScores.set(baseDiscordId, { score });
-                }
-            } else {
-                highScores.set(baseDiscordId, { score });
+            if (!playerScores.has(baseId) || score > playerScores.get(baseId).score) {
+                playerScores.set(baseId, { score, player: profile });
             }
         }
 
-        // Convert the map to an array for sorting
-        const scoresArray = Array.from(highScores.entries()).map(([discordId, data]) => ({
-            discordId,
-            score: data.score,
-        }));
+        const sortedScores = Array.from(playerScores.values()).sort((a, b) => b.score - a.score);
+        const topTen = sortedScores.slice(0, 10);
 
-        // Sort by score in descending order
-        scoresArray.sort((a, b) => b.score - a.score);
+        if (topTen.length === 0) {
+            return message.channel.send("The leaderboard is currently empty!");
+        }
 
-        // Take the top 10 players
-        const topTen = scoresArray.slice(0, 10);
-
-        // Fetch usernames and format the leaderboard string
+        // --- Create the Main Leaderboard Embed ---
         const leaderboardEntries = await Promise.all(
             topTen.map(async (entry, index) => {
+                const rank = index + 1;
+                let displayName = `Unknown User`;
+                const baseId = entry.player.discordId.split('_')[0];
                 try {
-                    // Fetch user with the valid base ID
-                    const user = await message.client.users.fetch(entry.discordId);
-                    return `${index + 1}. ${user.username} - ${entry.score}`;
-                } catch (error) {
-                    console.error(`Could not fetch user for ID ${entry.discordId}`);
-                    return `${index + 1}. Unknown User - ${entry.score}`;
+                    const member = await message.guild.members.fetch(baseId);
+                    displayName = member.displayName;
+                } catch {
+                    displayName = `Unknown (${baseId.substring(0, 6)}...)`;
                 }
+                return `**${rank}.** ${displayName} - **Score:** ${entry.score}`;
             })
         );
 
-        if (leaderboardEntries.length === 0) {
-            return message.channel.send("The leaderboard is empty!");
-        }
+        const leaderboardEmbed = new EmbedBuilder()
+            .setColor(0x0099ff)
+            .setTitle('🏆 Mitnick Bot Leaderboard')
+            .setDescription(leaderboardEntries.join('\n'))
+            .setFooter({ text: 'Select a player from the menu below for detailed stats.' });
 
-        message.channel.send(`**Leaderboard**\n\`\`\`${leaderboardEntries.join('\n')}\`\`\``);
+        // --- Create the Interactive Dropdown Menu ---
+        const selectOptions = topTen.map((entry, index) => {
+            const baseId = entry.player.discordId.split('_')[0];
+            return {
+                label: `${index + 1}. ${leaderboardEntries[index].split(' - ')[0].replace(/\*\*/g, '')}`, // Get name from pre-formatted string
+                description: `View detailed stats for this user.`,
+                value: baseId,
+            };
+        });
+
+        const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId('leaderboard-stat-select')
+            .setPlaceholder('View a player\'s detailed report...')
+            .addOptions(selectOptions);
+
+        const row = new ActionRowBuilder().addComponents(selectMenu);
+
+        const leaderboardMessage = await message.channel.send({ embeds: [leaderboardEmbed], components: [row] });
+
+        // --- Create a Collector to Handle Selections ---
+        const collector = leaderboardMessage.createMessageComponentCollector({
+            componentType: ComponentType.StringSelect,
+            time: 120000, // Menu stays active for 2 minutes
+        });
+
+        collector.on('collect', async (interaction) => {
+            const targetUserId = interaction.values[0];
+            const playerData = playerScores.get(targetUserId);
+
+            if (!playerData) {
+                return interaction.reply({ content: 'Could not find data for this player.', ephemeral: true });
+            }
+
+            const { player } = playerData;
+            const chatHistory = player.chatHistory || {};
+            const penalties = player.penalties || {};
+            const levelsCompleted = Object.keys(chatHistory).length;
+            
+            let totalUserMessages = 0;
+            for (const level in chatHistory) {
+                totalUserMessages += chatHistory[level].filter(msg => msg.role === 'user').length;
+            }
+
+            let member;
+            try {
+                member = await message.guild.members.fetch(targetUserId);
+            } catch {
+                // User might not be in the server, so we can't show an avatar
+            }
+
+            const statEmbed = new EmbedBuilder()
+                .setColor(0x00ff99)
+                .setTitle(`Stat Report for ${member ? member.displayName : `User ${targetUserId}`}`)
+                .setThumbnail(member ? member.user.displayAvatarURL() : null)
+                .addFields(
+                    { name: 'Total Score', value: `\`${playerData.score}\``, inline: true },
+                    { name: 'Current Level', value: `\`${player.currentLevel}\``, inline: true },
+                    { name: 'Levels Played', value: `\`${levelsCompleted}\``, inline: true },
+                    { name: 'Total Messages Sent', value: `\`${totalUserMessages}\` (This is the primary score penalty)`, inline: false },
+                    { name: 'Penalties Incurred', value: `\`${Object.keys(penalties).length > 0 ? JSON.stringify(penalties) : 'None'}\``, inline: false }
+                )
+                .setTimestamp();
+            
+            // Send the detailed stats as a private (ephemeral) message
+            await interaction.reply({ embeds: [statEmbed], ephemeral: true });
+        });
+
+        collector.on('end', () => {
+            leaderboardMessage.edit({ components: [] }); // Remove the menu after it expires
+        });
     },
 };

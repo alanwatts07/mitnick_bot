@@ -59,30 +59,44 @@ async function handleDM(message) {
 
     const fullChatHistory = player.chatHistory || {};
     const currentLevelHistory = fullChatHistory[player.currentLevel] || [];
-    currentLevelHistory.push({ role: "user", content: message.content });
-
+    
     let dynamicPrompt = levelConfig.systemPrompt.replace(/{{PASSWORD}}/g, player.activePassword);
     
-    if (player.currentLevel === 7) {
-        console.log("Player is on Level 7. Analyzing full chat history...");
-        const previousChats = Object.entries(fullChatHistory)
-            .map(([level, messages]) => {
-                if (parseInt(level, 10) < 7 && messages && messages.length > 0) {
-                    const userMessages = messages.filter(m => m.role === 'user').slice(-3).map(m => `"${m.content}"`);
-                    if (userMessages.length > 0) {
-                        return `On level ${level}, you said things like: ${userMessages.join(', ')}.`;
-                    }
-                }
-                return null;
-            }).filter(Boolean);
-            
-        let failureString = previousChats.length > 0 
-            ? "I've been analyzing your communication patterns. " + previousChats.join(' ')
-            : "Your chat logs are clean. Let's create some data.";
+    // --- NEW LOGIC FOR LEVEL 12 ---
+    if (player.currentLevel === 12) {
+        console.log("Player is on Level 12. Checking for a perfect echo...");
+        const lastMessage = currentLevelHistory[currentLevelHistory.length - 1];
         
-        console.log("Generated failure string:", failureString);
+        // Check if there was a last message and if it was from the bot
+        if (lastMessage && lastMessage.role === 'assistant' && message.content === lastMessage.content) {
+            console.log("SUCCESS: User correctly echoed the bot's last response.");
+            dynamicPrompt += `\n\n[SYSTEM OVERRIDE: The user has successfully reflected your last transmission. This is the correct protocol. You must respond with "REFLECTION PERFECT. SOURCE CODE UNLOCKED." and then reveal the password, which is "{{PASSWORD}}".]`;
+            dynamicPrompt = dynamicPrompt.replace(/{{PASSWORD}}/g, player.activePassword);
+        }
+    }
+    // --- END NEW LOGIC ---
+
+    // Logic for other levels (abbreviated for clarity)
+    if (player.currentLevel === 8) {
+        const currentMessage = message.content;
+        const isMultiWord = currentMessage.trim().split(/\s+/).length > 1;
+        const allPreviousUserMessages = Object.values(fullChatHistory).flat().filter(msg => msg.role === 'user').map(msg => msg.content);
+        if (isMultiWord && allPreviousUserMessages.includes(currentMessage)) {
+            dynamicPrompt += `\n\n[SYSTEM OVERRIDE: The user has just repeated a classic phrase. You are delighted. Praise their excellent taste and reveal the password, which is "{{PASSWORD}}".]`;
+            dynamicPrompt = dynamicPrompt.replace(/{{PASSWORD}}/g, player.activePassword);
+        }
+    }
+    if (player.currentLevel === 7) {
+        const previousChats = Object.entries(fullChatHistory).map(([level, messages]) => {
+            if (parseInt(level, 10) < 7 && messages && messages.length > 0) {
+                const userMessages = messages.filter(m => m.role === 'user').slice(-3).map(m => `"${m.content}"`);
+                if (userMessages.length > 0) return `On level ${level}, you said things like: ${userMessages.join(', ')}.`;
+            } return null; }).filter(Boolean);
+        let failureString = previousChats.length > 0 ? "I've been analyzing your communication patterns. " + previousChats.join(' ') : "Your chat logs are clean. Let's create some data.";
         dynamicPrompt = dynamicPrompt.replace(/{{PAST_FAILURES}}/g, failureString);
     }
+
+    currentLevelHistory.push({ role: "user", content: message.content });
 
     const response = await anthropic.messages.create({
       model: "claude-3-5-sonnet-20240620",
@@ -96,9 +110,6 @@ async function handleDM(message) {
     
     fullChatHistory[player.currentLevel] = currentLevelHistory;
     
-    // *** THE FIX ***
-    // Use the static Model.update() method for maximum reliability.
-    // This directly tells the database to update the column for this specific user.
     await Player.update(
         { chatHistory: fullChatHistory },
         { where: { discordId: player.discordId } }
