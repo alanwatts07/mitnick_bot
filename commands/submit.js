@@ -1,7 +1,6 @@
 // /commands/submit.js
 const Player = require('../models/player');
 const { assignRole } = require('../bots/sysadmin');
-const mitnickBot = require('../bots/mitnick');
 
 module.exports = {
     name: 'submit',
@@ -23,31 +22,38 @@ module.exports = {
             return message.reply("You haven't started this level yet! Send me a DM to begin.");
         }
 
-        const attempts = player.attempts;
-        attempts[player.currentLevel] = (attempts[player.currentLevel] || 0) + 1;
-
+        // --- Start of New Scoring Logic ---
         if (player.activePassword.toLowerCase() === passwordGuess.toLowerCase()) {
-            const newLevel = player.currentLevel + 1;
+            
+            const levelJustCompleted = player.currentLevel;
+            const chatHistory = player.chatHistory || {};
+            const levelHistory = chatHistory[levelJustCompleted] || [];
+            const userMessagesSent = levelHistory.filter(msg => msg.role === 'user').length;
+            
+            // Calculate the score: 100 points minus 1 for each message sent.
+            const levelScore = Math.max(0, 101 - userMessagesSent);
+
+            // Get the existing scores, add the new one, and prepare for update.
+            const existingScores = player.levelScores || {};
+            const updatedScores = { ...existingScores, [levelJustCompleted]: levelScore };
+
+            const newLevel = levelJustCompleted + 1;
             
             await player.update({ 
                 currentLevel: newLevel,
                 activePassword: null,
-                attempts: { ...attempts }
+                levelScores: updatedScores // Save the updated scores object
             });
-
-            // *** CHANGE: We no longer delete the conversation history from memory upon level completion. ***
-            // const conversations = mitnickBot.conversations;
-            // if (conversations && conversations.has(discordId)) {
-            //     conversations.delete(discordId);
-            // }
-
-            message.reply(`Correct! You have advanced to Level ${newLevel}.`);
+            
+            message.reply(`Correct! You completed Level ${levelJustCompleted} with a score of ${levelScore}. You have advanced to Level ${newLevel}.`);
 
             if (message.member) {
-                assignRole(message.member, newLevel - 1);
+                assignRole(message.member, levelJustCompleted);
             }
+        // --- End of New Scoring Logic ---
 
         } else {
+            // This part is for incorrect guesses, it remains the same.
             const failedSubmissions = player.failedSubmissions || {};
             if (!failedSubmissions[player.currentLevel]) {
                 failedSubmissions[player.currentLevel] = [];
@@ -55,7 +61,6 @@ module.exports = {
             failedSubmissions[player.currentLevel].push(passwordGuess);
 
             await player.update({ 
-                attempts: { ...attempts },
                 failedSubmissions: { ...failedSubmissions }
             });
 

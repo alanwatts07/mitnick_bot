@@ -24,12 +24,17 @@ const Player = sequelize.define('Player', {
         type: DataTypes.JSON,
         defaultValue: {},
     },
-    // NEW FIELD: This will store the entire chat history for each level.
-    // e.g., { "1": [{ role: "user", content: "..." }, { role: "assistant", content: "..." }] }
     chatHistory: {
         type: DataTypes.JSON,
         defaultValue: {},
     },
+    // --- NEW FIELD ---
+    // Stores the score for each completed level.
+    // e.g., { "1": 95, "2": 88 }
+    levelScores: {
+        type: DataTypes.JSON,
+        defaultValue: {},
+    }
 });
 
 module.exports = Player;

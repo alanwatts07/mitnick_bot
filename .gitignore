@@ -21,7 +21,7 @@ database.sqlite
 # Custom level configurations
 # As requested, this will ignore the entire /levels directory.
 /levels/
-
+/img/
 # System files
 .DS_Store
 Thumbs.db

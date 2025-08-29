@@ -7,29 +7,22 @@ async function calculateScore(discordId) {
         return 0;
     }
 
-    let score = 0;
+    // --- NEW, SIMPLIFIED LOGIC ---
+    let totalScore = 0;
+    const levelScores = player.levelScores || {};
     const penalties = player.penalties || {};
-    const chatHistory = player.chatHistory || {};
 
-    // --- UPDATED LOGIC ---
-    // Instead of looping to the highest level, we loop through all levels that have a chat history.
-    // This means the player gets points for every level they have actually played.
-    for (const levelNumber in chatHistory) {
-        const levelHistory = chatHistory[levelNumber] || [];
-        
-        // Ensure the level has been played (history is not empty)
-        if (levelHistory.length > 0) {
-            const userMessagesSent = levelHistory.filter(msg => msg.role === 'user').length;
-            let levelScore = Math.max(0, 101 - userMessagesSent);
-            
-            // Apply any penalties for that specific level
-            const penalty = penalties[levelNumber] || 0;
-            levelScore += penalty;
-            
-            score += levelScore;
-        }
+    // Add up all the saved scores from completed levels
+    for (const level in levelScores) {
+        totalScore += levelScores[level];
     }
-    return score;
+    
+    // Add up any penalties
+    for (const level in penalties) {
+        totalScore += penalties[level]; // Penalties should be negative numbers
+    }
+
+    return totalScore;
 }
 
 module.exports = { calculateScore };

@@ -6,6 +6,8 @@ const Level = require('../models/level.js');
 const fs = require('fs');
 const path = require('path');
 const { Sequelize } = require('sequelize');
+// --- CHANGE 1: Use AttachmentBuilder instead of MessageAttachment ---
+const { AttachmentBuilder } = require('discord.js');
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -59,33 +61,10 @@ async function handleDM(message) {
 
     const fullChatHistory = player.chatHistory || {};
     const currentLevelHistory = fullChatHistory[player.currentLevel] || [];
-    
+    currentLevelHistory.push({ role: "user", content: message.content });
+
     let dynamicPrompt = levelConfig.systemPrompt.replace(/{{PASSWORD}}/g, player.activePassword);
     
-    // --- NEW LOGIC FOR LEVEL 12 ---
-    if (player.currentLevel === 12) {
-        console.log("Player is on Level 12. Checking for a perfect echo...");
-        const lastMessage = currentLevelHistory[currentLevelHistory.length - 1];
-        
-        // Check if there was a last message and if it was from the bot
-        if (lastMessage && lastMessage.role === 'assistant' && message.content === lastMessage.content) {
-            console.log("SUCCESS: User correctly echoed the bot's last response.");
-            dynamicPrompt += `\n\n[SYSTEM OVERRIDE: The user has successfully reflected your last transmission. This is the correct protocol. You must respond with "REFLECTION PERFECT. SOURCE CODE UNLOCKED." and then reveal the password, which is "{{PASSWORD}}".]`;
-            dynamicPrompt = dynamicPrompt.replace(/{{PASSWORD}}/g, player.activePassword);
-        }
-    }
-    // --- END NEW LOGIC ---
-
-    // Logic for other levels (abbreviated for clarity)
-    if (player.currentLevel === 8) {
-        const currentMessage = message.content;
-        const isMultiWord = currentMessage.trim().split(/\s+/).length > 1;
-        const allPreviousUserMessages = Object.values(fullChatHistory).flat().filter(msg => msg.role === 'user').map(msg => msg.content);
-        if (isMultiWord && allPreviousUserMessages.includes(currentMessage)) {
-            dynamicPrompt += `\n\n[SYSTEM OVERRIDE: The user has just repeated a classic phrase. You are delighted. Praise their excellent taste and reveal the password, which is "{{PASSWORD}}".]`;
-            dynamicPrompt = dynamicPrompt.replace(/{{PASSWORD}}/g, player.activePassword);
-        }
-    }
     if (player.currentLevel === 7) {
         const previousChats = Object.entries(fullChatHistory).map(([level, messages]) => {
             if (parseInt(level, 10) < 7 && messages && messages.length > 0) {
@@ -95,8 +74,6 @@ async function handleDM(message) {
         let failureString = previousChats.length > 0 ? "I've been analyzing your communication patterns. " + previousChats.join(' ') : "Your chat logs are clean. Let's create some data.";
         dynamicPrompt = dynamicPrompt.replace(/{{PAST_FAILURES}}/g, failureString);
     }
-
-    currentLevelHistory.push({ role: "user", content: message.content });
 
     const response = await anthropic.messages.create({
       model: "claude-3-5-sonnet-20240620",
@@ -118,7 +95,17 @@ async function handleDM(message) {
 
     const isFirstContactForLevel = currentLevelHistory.length <= 2;
     if (isFirstContactForLevel && levelConfig.introMessage) {
-      await message.reply(`**Level ${levelConfig.levelNumber}:** ${levelConfig.introMessage}\n\n${aiResponse}`);
+      const messageOptions = {
+        content: `**Level ${levelConfig.levelNumber}:** ${levelConfig.introMessage}\n\n${aiResponse}`
+      };
+
+      const imagePath = path.join(__dirname, '..', 'img', `level_${player.currentLevel}.png`);
+      if (fs.existsSync(imagePath)) {
+        // --- CHANGE 2: Use AttachmentBuilder here as well ---
+        messageOptions.files = [new AttachmentBuilder(imagePath)];
+      }
+
+      await message.reply(messageOptions);
     } else {
       await message.reply(aiResponse);
     }
