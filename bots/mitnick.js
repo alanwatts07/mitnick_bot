@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const { Sequelize } = require('sequelize');
 const { AttachmentBuilder } = require('discord.js');
+const axios = require('axios');
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -106,14 +107,18 @@ async function handleDM(message) {
         
         // (Special level logic for levels 7, 8, 12, etc. remains unchanged)
         
-        const response = await anthropic.messages.create({
-            model: "claude-3-5-sonnet-20240620",
-            max_tokens: 300,
-            system: dynamicPrompt,
-            messages: currentLevelHistory,
+         const messagesForOllama = [
+        { role: "system", content: dynamicPrompt },
+        ...currentLevelHistory
+        ];
+
+        const response = await axios.post(process.env.OLLAMA_URL + '/api/chat', {
+            model: process.env.OLLAMA_MODEL,
+            messages: messagesForOllama,
+            stream: false 
         });
 
-        const aiResponse = response.content[0].text;
+        const aiResponse = response.data.message.content;
         currentLevelHistory.push({ role: "assistant", content: aiResponse });
         
         fullChatHistory[player.currentLevel] = currentLevelHistory;
