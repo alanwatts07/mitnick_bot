@@ -1,31 +1,31 @@
-// /events/messageCreate.js (Updated)
+// /events/messageCreate.js
 const { prefix } = require('../config.json');
-const { handleDM } = require('../bots/mitnick');
+const { handleDM, sendLevelIntro } = require('../bots/mitnick'); // Ensure sendLevelIntro is imported if needed elsewhere
 
 module.exports = {
     name: 'messageCreate',
     async execute(message, client) {
-        // If the message is a DM and not from a bot, handle it with the Mitnick bot
-        if (message.channel.type === 1 && !message.author.bot) { // 1 is the type for DMChannel
-            await handleDM(message);
-            return;
-        }
+        if (message.author.bot) return;
 
-        // Handle server commands
-        if (!message.content.startsWith(prefix) || message.author.bot || !message.guild) return;
+        // --- NEW LOGIC: Check for commands universally ---
+        if (message.content.startsWith(prefix)) {
+            const args = message.content.slice(prefix.length).trim().split(/ +/);
+            const commandName = args.shift().toLowerCase();
+            const command = client.commands.get(commandName);
 
-        const args = message.content.slice(prefix.length).trim().split(/ +/);
-        const commandName = args.shift().toLowerCase();
+            if (!command) return;
 
-        const command = client.commands.get(commandName);
-
-        if (!command) return;
-
-        try {
-            await command.execute(message, args);
-        } catch (error) {
-            console.error(error);
-            message.reply('There was an error trying to execute that command!');
+            try {
+                // Pass client to the command in case it's needed (like for sending DMs)
+                await command.execute(message, args, client);
+            } catch (error) {
+                console.error(error);
+                message.reply('There was an error trying to execute that command!');
+            }
+        } 
+        // If it's not a command AND it's a DM, handle it with the AI
+        else if (message.channel.type === 1) { // 1 is the enum for DMChannel
+            await handleDM(message, client);
         }
     },
 };

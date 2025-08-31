@@ -3,12 +3,12 @@ const Player = require('../models/player');
 const fs = require('fs');
 const path = require('path');
 const { ActionRowBuilder, StringSelectMenuBuilder, ComponentType } = require('discord.js');
-const { sendLevelIntro } = require('../bots/mitnick'); // Import the new function
+const { sendLevelIntro } = require('../bots/mitnick');
 
 module.exports = {
     name: 'select',
     description: 'Displays a menu to select a specific level to play.',
-    async execute(message, args) {
+    async execute(message, args, client) {
         const discordId = message.author.id;
         const player = await Player.findOne({ where: { discordId } });
         if (!player) {
@@ -24,10 +24,9 @@ module.exports = {
 
         const options = levelFiles.map(file => {
             const level = require(path.join(levelsPath, file));
-            const description = level.introMessage ? level.introMessage.substring(0, 100) : 'No description available.';
             return {
                 label: `Level ${level.levelNumber}`,
-                description: description,
+                description: level.introMessage.substring(0, 100),
                 value: level.levelNumber.toString(),
             };
         }).sort((a, b) => parseInt(a.label.split(' ')[1]) - parseInt(b.label.split(' ')[1]));
@@ -42,6 +41,7 @@ module.exports = {
         const selectMessage = await message.reply({
             content: 'Please select a level you would like to start:',
             components: [row],
+            fetchReply: true
         });
 
         const collector = selectMessage.createMessageComponentCollector({
@@ -56,15 +56,26 @@ module.exports = {
 
             const selectedLevel = parseInt(interaction.values[0], 10);
 
+            // Update player's current level first
             await player.update({
                 currentLevel: selectedLevel,
-                activePassword: null
+                activePassword: null // Reset password for the new level
             });
-            
-            await interaction.update({ content: `You have selected Level ${selectedLevel}. I've sent the intro to your DMs!`, components: [] });
 
-            // Automatically start the selected level
-            await sendLevelIntro(interaction.user, selectedLevel);
+            // Acknowledge the selection immediately
+            await interaction.update({ content: `You have selected Level ${selectedLevel}. Starting it now in your DMs...`, components: [] });
+
+            // --- AUTO-START SELECTED LEVEL ---
+            try {
+                // Get the user's DM channel
+                const dmChannel = await interaction.user.createDM();
+                // Call the function to send the level intro
+                await sendLevelIntro(dmChannel, player, selectedLevel);
+            } catch (error) {
+                console.error(`[Select] Failed to auto-start selected level for ${discordId}:`, error.message);
+                // Use followUp for an ephemeral message after an interaction has been updated
+                await interaction.followUp({ content: "I tried to start the level, but it seems you have DMs disabled. Please enable them and try again.", ephemeral: true });
+            }
         });
 
         collector.on('end', collected => {
@@ -74,3 +85,4 @@ module.exports = {
         });
     },
 };
+

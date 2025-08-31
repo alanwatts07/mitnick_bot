@@ -1,12 +1,12 @@
 // /commands/submit.js
 const Player = require('../models/player');
 const { assignRole, checkCompletionRole } = require('../bots/sysadmin');
-const { sendLevelIntro } = require('../bots/mitnick'); // Import the new function
+const { sendLevelIntro } = require('../bots/mitnick');
 
 module.exports = {
     name: 'submit',
     description: 'Submits the password you social engineered.',
-    async execute(message, args) {
+    async execute(message, args, client) {
         const discordId = message.author.id;
         const passwordGuess = args.join(' ');
 
@@ -20,11 +20,10 @@ module.exports = {
         }
 
         if (!player.activePassword) {
-            return message.reply("You haven't started this level yet! Send me a DM to begin.");
+            return message.reply("Your level isn't properly started. Try using `!start` or `!select`.");
         }
 
         if (player.activePassword.toLowerCase() === passwordGuess.toLowerCase()) {
-            
             const levelJustCompleted = player.currentLevel;
             const chatHistory = player.chatHistory || {};
             const levelHistory = chatHistory[levelJustCompleted] || [];
@@ -34,8 +33,8 @@ module.exports = {
 
             const existingScores = player.levelScores || {};
             const updatedScores = { ...existingScores, [levelJustCompleted]: levelScore };
-            
-            const totalCompleted = Object.keys(updatedScores).length;
+            const completedCount = Object.keys(updatedScores).length;
+
             const newLevel = levelJustCompleted + 1;
             
             await player.update({ 
@@ -44,15 +43,22 @@ module.exports = {
                 levelScores: updatedScores
             });
             
-            message.reply(`Correct! You completed Level ${levelJustCompleted} with a score of ${levelScore}. Auto-starting Level ${newLevel}...`);
+            await message.reply(`Correct! You completed Level ${levelJustCompleted} with a score of ${levelScore}.`);
 
-            if (message.member) {
+            // Handle role assignments only if in a server
+            if (message.guild && message.member) {
                 assignRole(message.member, levelJustCompleted);
-                checkCompletionRole(message.member, totalCompleted);
+                await checkCompletionRole(message.member, completedCount);
             }
 
-            // Automatically start the next level by sending the intro DM
-            await sendLevelIntro(message.author, newLevel);
+            // --- AUTO-START NEXT LEVEL ---
+            try {
+                // The message channel is the DM channel, which we pass directly.
+                await sendLevelIntro(message.channel, player, newLevel);
+            } catch (error) {
+                console.error(`[Submit] Failed to auto-start next level for ${discordId}:`, error.message);
+                await message.channel.send("I tried to start the next level for you, but encountered an error. Please use `!start` in the server to continue.");
+            }
 
         } else {
             const failedSubmissions = player.failedSubmissions || {};
@@ -61,12 +67,9 @@ module.exports = {
             }
             failedSubmissions[player.currentLevel].push(passwordGuess);
 
-            await player.update({ 
-                failedSubmissions: { ...failedSubmissions }
-            });
+            await player.update({ failedSubmissions });
 
             message.reply('Incorrect password. Keep trying!');
         }
     },
 };
-

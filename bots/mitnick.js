@@ -17,37 +17,65 @@ const anthropic = new Anthropic({
  * @param {User} user The Discord user object to send the DM to.
  * @param {number} levelNumber The level to start.
  */
-async function sendLevelIntro(user, levelNumber) {
-    const levelFilePath = path.join(__dirname, `../levels/level_${levelNumber}.js`);
-    // Check if the next level exists
+async function sendLevelIntro(channel, player, levelNumber) {
+    const levelFilePath = path.join(__dirname, '..', 'levels', `level_${levelNumber}.js`);
+
+    // Check if the player has completed all available levels
     if (!fs.existsSync(levelFilePath)) {
         try {
-            await user.send("Congratulations! It seems you've completed all available levels!");
+            await channel.send("You've completed all available levels! Congratulations!");
         } catch (error) {
-            console.error(`Could not send 'all levels complete' DM to user ${user.id}.`);
+            console.error(`[Mitnick] Could not send 'all levels complete' message to channel ${channel.id}.`, error.message);
+            throw error; // Let the calling function know it failed
         }
         return;
     }
 
     const levelConfig = require(levelFilePath);
-    if (!levelConfig.introMessage) {
-        return; // No intro message for this level
+
+    // This logic ensures a new, unique password is created for the level start.
+    const t = await Level.sequelize.transaction();
+    try {
+        let levelData = await Level.findOne({ where: { levelNumber: levelConfig.levelNumber }, transaction: t, lock: t.LOCK.UPDATE });
+        if (!levelData) {
+            const passwordObjects = levelConfig.passwords.map(p => ({ value: p, used: false }));
+            levelData = await Level.create({ levelNumber: levelConfig.levelNumber, passwords: passwordObjects }, { transaction: t });
+        }
+        const unusedPassword = levelData.passwords.find(p => !p.used);
+        if (!unusedPassword) {
+            await t.commit();
+            await channel.send("Oh no! It looks like we've run out of unique passwords for this level. Please contact an admin.");
+            return;
+        }
+        player.activePassword = unusedPassword.value;
+        const passwordIndex = levelData.passwords.findIndex(p => p.value === unusedPassword.value);
+        levelData.passwords[passwordIndex].used = true;
+        levelData.changed('passwords', true);
+        await levelData.save({ transaction: t });
+        await player.save({ transaction: t });
+        await t.commit();
+        console.log(`[Mitnick] Assigned password "${player.activePassword}" for Level ${levelConfig.levelNumber} to player ${player.discordId}.`);
+    } catch (error) {
+        await t.rollback();
+        console.error("[Mitnick] Error assigning new password in sendLevelIntro:", error.message);
+        await channel.send("I encountered a database error trying to start the level. Please try again.");
+        return;
     }
 
-    // Prepare the message content and check for an image
-    const messageOptions = {
-        content: `**Level ${levelConfig.levelNumber}:** ${levelConfig.introMessage}\n\n*You can now begin interacting with the AI by sending your first message below.*`
-    };
-
-    const imagePath = path.join(__dirname, '..', 'img', `level_${levelNumber}.png`);
-    if (fs.existsSync(imagePath)) {
-        messageOptions.files = [new AttachmentBuilder(imagePath)];
-    }
 
     try {
-        await user.send(messageOptions);
+        const introOptions = {
+            content: `**Level ${levelConfig.levelNumber}:** ${levelConfig.introMessage}`
+        };
+
+        const imagePath = path.join(__dirname, '..', 'img', `level_${levelConfig.levelNumber}.png`);
+        if (fs.existsSync(imagePath)) {
+            introOptions.files = [new AttachmentBuilder(imagePath)];
+        }
+        await channel.send(introOptions);
     } catch (error) {
-        console.error(`Could not send level intro DM to user ${user.id}.`);
+        console.error(`[Mitnick] Could not send level intro to channel ${channel.id}.`, error.message);
+        throw error; // Let the calling function know it failed
     }
 }
 
